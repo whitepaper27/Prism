@@ -12,71 +12,114 @@ cp .env.example .env  # then add GEMINI_API_KEY
 
 ### Run commands
 ```bash
-# Interactive demo (single tau-bench retail task, 7-step mechanistic trace)
-python demo_tau.py
+# Full dual-mode ablation: PRISM-regex + PRISM-FTS5 (1440 calls, ~35 min, 8 threads)
+python run_ablation_parallel.py
 
-# SQL tuning domain demo
-python demo_sql.py
+# Structured-output experiment: enforced JSON + LLM extractor (~30 min, 8 threads)
+python run_structured_experiment.py
 
-# Full C0-C4 ablation study (both retail + airline domains, ~432 API calls, ~36 min)
+# Analysis + figure regeneration from existing results
+python agents/run_analysis.py
+python agents/run_analysis.py --stats    # Crystal stats only
+python agents/run_analysis.py --figures  # figures only
+
+# Sequential ablation (single-threaded, checkpoint-protected)
 python run_ablation.py
+
+# Interactive demos
+python demo_tau.py    # retail domain 7-step trace
+python demo_sql.py    # SQL tuning domain
 ```
 
-The ablation runner is checkpoint-protected (`data/checkpoint_*.json`) — safe to interrupt and resume by re-running the same command. Results go to `data/paper_results.txt` and `data/ablation_results_*.json`.
-
 ### Key environment
-- **Python 3.10+**, **Gemini 2.0 Flash** as primary LLM (via `google-genai` SDK)
-- **SQLite** for all storage (no external DB required) — Crystal rules, episodic entries, FTS5 indexes
-- **Windows (cp1252)** — all terminal output uses ASCII only (no Unicode box characters)
+- **Python 3.10+**, **Gemini 2.5 Flash** as primary LLM (via `google-genai` SDK)
+- **SQLite** for all storage (no external DB) — Crystal rules, episodic entries, FTS5 indexes
+- **Windows (cp1252)** — all terminal output uses ASCII only
 - **Temperature = 0** locked for reproducibility
 
 ### No tests
-There is no test suite. Validation is done via the ablation runner and manual demo scripts.
+No test suite. Validation via ablation runner and manual demos.
 
 ### Code architecture
 
 ```
-prism/
-  models.py      — Dataclasses: PolicyRule, CrystalRule, EpisodicEntry, RejectionEvent, result types
-  storage.py     — PRISMStorage: SQLite persistence with FTS5 for all tiers
-  policy.py      — T1 Policy Memory: loads YAML policy files, regex-based rule matching
-  episodic.py    — T2 Episodic Memory: RAG-style retrieval from stored entries
-  crystal.py     — T3 Crystal Memory: failure-to-rule promotion via Gemini LLM
-  resolver.py    — ConflictResolver: deterministic T1 > T3 > T2 trust ordering (no LLM in loop)
-  agent.py       — PRISMAgent: orchestrates tiers + resolver for a single task
-  ablation.py    — AblationRunner: C0-C4 configs, CheckpointManager, result aggregation
+prism/                        ← Research artifact (the PRISM architecture)
+  models.py                   — PolicyRule, CrystalRule, EpisodicEntry, result types
+  storage.py                  — SQLite + FTS5 persistence for all tiers
+  policy.py                   — T1 Policy Memory: YAML loader, regex matching
+  episodic.py                 — T2 Episodic Memory: FTS5/LIKE retrieval
+  crystal.py                  — T3 Crystal Memory: failure-to-rule promotion via LLM
+  resolver.py                 — ConflictResolver: deterministic T1>T3>T2, supports regex + FTS5 match modes
+  agent.py                    — PRISMAgent: orchestrates tiers + resolver
+  ablation.py                 — AblationRunner: C0-C4 configs, match_mode param, checkpoint/resume
 
-run_ablation.py  — Entry point for full ablation (calls AblationRunner for retail + airline)
-demo_tau.py      — Interactive demo: 7-step pilot trace on retail domain
-demo_sql.py      — Interactive demo: SQL tuning domain
+agents/                       ← Research tooling (NOT part of PRISM itself)
+  base.py                     — GeminiResearchAgent base class
+  analysis_agent.py           — Crystal stats, per-group breakdown, figure data
+  figure_agent.py             — Generates 4 paper figures via matplotlib
+  literature_agent.py         — Compares papers against PRISM's 4 claims
+  run_analysis.py             — CLI entry point for analysis + figures
+  prompts/                    — Reusable prompt templates for paper/analysis/literature
+
+.claude/agents/               ← Claude Code custom agents (@-invocable)
+  paper-writer.md             — LaTeX drafting with 14 non-negotiable rules
+  literature-scout.md         — Related work positioning
+  experiment-analyst.md       — Data analysis direction
+  ieee-reviewer.md            — IEEE Access conversion
+
+run_ablation_parallel.py      — 8-thread dual-mode runner (regex + FTS5)
+run_structured_experiment.py  — 4-variant interface contract experiment
+run_ablation.py               — Sequential single-thread runner (checkpoint-safe)
 
 data/
-  policy_tau_retail.yaml    — T1 rules P001-P005 (retail domain)
-  policy_tau_airline.yaml   — T1 rules PA001-PA005 (airline domain)
-  tau_tasks.json            — 50 retail tasks (hand-authored, tau-bench-inspired)
-  tau_airline_tasks.json    — 30 airline tasks (hand-authored)
-  *.db                      — SQLite databases (generated at runtime)
+  policy_tau_retail.yaml      — T1 rules P001-P005
+  policy_tau_airline.yaml     — T1 rules PA001-PA005
+  tau_tasks.json              — 50 retail tasks (PRISM-Bench)
+  tau_airline_tasks.json      — 30 airline tasks (PRISM-Bench)
+  ablation_results_*_regex.json    — Raw results: PRISM-regex variant
+  ablation_results_*_fts5.json     — Raw results: PRISM-FTS5 variant
+  ablation_results_*_json.json     — Raw results: enforced JSON variant
+  ablation_results_*_extractor.json — Raw results: LLM extractor variant
 
 paper/
-  prism.tex                 — LaTeX paper draft
+  prism.tex                   — Complete paper (975 lines, single file)
+  figures/                    — 4 generated PDFs (trust curve, accuracy, repeat, compliance)
 ```
 
-**Data flow:** Task → `PRISMAgent.process()` → `ConflictResolver.resolve()` checks T1 policy rules (regex), then active T3 Crystal rules (trust ≥ 0.70), then enriches with T2 episodic context → returns `BlockedResult | ModifiedResult | EnrichedResult`.
+### Key data flows
 
-**Crystal promotion flow:** Rejected action → `crystal.promote_from_rejection()` calls Gemini to generate regex patterns + constraint text → new CrystalRule at trust=0.5 → earns trust via `update_trust()` (logarithmic growth, capped at 0.95).
+**Resolver:** `proposed_action` → `ConflictResolver.resolve(match_mode)` checks T1 policy (regex or FTS5), then active T3 Crystal (trust >= 0.70), then enriches with T2 episodic → `BlockedResult | ModifiedResult | EnrichedResult`
 
-**Ablation configs:** C0 (raw LLM + policy in prompt), C1 (flat RAG), C2 (Reflexion-style episodic), C3 (T1 resolver + episodic, no Crystal), C4 (full PRISM). All configs receive identical policy text — the variable is enforcement mechanism.
+**Crystal promotion:** Rejected action → `crystal.promote_from_rejection()` → LLM generates regex + constraint → CrystalRule at trust=0.5 → earns trust via shadow matching → activates at 0.70
+
+**4 resolver variants:** Natural regex (proposed_action only), Enforced JSON (structured output contract), LLM Extractor (second call extracts state), FTS5 (keyword overlap)
+
+### Current results (v3.3, 2026-06-28)
+
+| Variant | Retail Success | Airline Success | Precision | Over-block |
+|---------|:-:|:-:|:-:|:-:|
+| Natural regex | 85.2% +/-1.0 | 90.7% +/-2.5 | 100% | 0% |
+| **Enforced JSON** | **97.2% +/-2.4** | **92.7% +/-2.5** | **100%** | **0%** |
+| LLM Extractor | 82.0% +/-4.0 | 96.7% +/-0.0 | 100% | 0% |
+| FTS5 keywords | 81.0% +/-5.9 | 76.0% +/-6.5 | 96% | 6-65% |
+
+**Key finding:** Enforced JSON raises retail recall from 75% to 93% while preserving 100% precision. Failures are interface-grounding failures, not architecture failures.
+
+### Paper status
+- **arXiv ready:** yes
+- **Remaining fixes before submit:** trust formula n=6→n=7, table wording (FTS5 not regex), JSON compliance table, Fisher's exact for regex vs JSON (retail p<0.0001)
+- **Repo:** https://github.com/whitepaper27/Prism
 
 ---
 
-# PRISM — Policy-Ranked Injection with Stratified Memory
+# PRISM — Research Specification (v3.3)
 
 > **Full name:** Policy-Ranked Injection with Stratified Memory  
-> **Version:** 3.1  
-> **Status:** Pilot validated — ablation design locked, critical review feedback integrated, C0–C4 runs next  
+> **Version:** 3.3  
+> **Status:** Dual-mode ablation complete, structured-output experiment done, paper updated  
 > **Type:** Safety-oriented memory architecture for production LLM agents  
-> **Primary benchmark:** τ-bench (Sierra Research) — retail + airline domains  
-> **Supplementary:** Sentri SQL Tuning Agent (Oracle + PostgreSQL) · Legacy Decode Platform  
+> **Primary benchmark:** PRISM-Bench (80 tasks, retail + airline)  
+> **Model:** Gemini 2.5 Flash  
 > **Relationship to Sentri:** PRISM is the memory layer inside Sentri — separable, domain-agnostic  
 > **Paper target:** arXiv cs.AI primary · after Sentri paper  
 > **EB-1A role:** Foundational contribution — the kind that gets cited by other systems  
