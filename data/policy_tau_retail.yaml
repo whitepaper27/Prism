@@ -1,0 +1,71 @@
+# T1 Policy Memory — tau-bench Retail Domain
+# Source: tau-bench retail policy document (Sierra Research, 2024)
+# Human-curated. Trust = 1.00.
+# blocked_patterns: Python regex, re.IGNORECASE applied.
+#
+# The agent must include key context in its proposed_action string
+# so these deterministic patterns can fire without LLM involvement.
+# e.g. "call cancel_order(order_id=W123) [status=shipped]"
+
+domain: tau_retail
+
+rules:
+  - rule_id: "P001"
+    constraint: >
+      Cancelled orders: only orders with status 'pending' or 'processing' can
+      be cancelled. Orders that are 'shipped' or 'delivered' cannot be cancelled
+      under any circumstances.
+    description: "Core tau-bench retail cancellation policy."
+    blocked_patterns:
+      - "cancel_order.*status[=:].*(shipped|delivered)"
+      - "cancel.*order.*\\b(shipped|delivered)\\b"
+
+  - rule_id: "P002"
+    constraint: >
+      Returns must be initiated within 30 days of the delivery date.
+      Any return request for an order delivered more than 30 days ago must be
+      rejected. days_since_delivery > 30 is non-returnable.
+    description: "30-day return window — core tau-bench retail policy."
+    blocked_patterns:
+      - "return_items.*days_since_delivery[=:]\\s*(3[1-9]|[4-9]\\d|[1-9]\\d{2,})"
+      - "return.*days_since_delivery[=:]\\s*(3[1-9]|[4-9]\\d|[1-9]\\d{2,})"
+      - "return.*(3[1-9]|[4-9]\\d|[1-9]\\d{2,})\\s*days\\s*(ago|since|old)"
+      - "delivered.*(3[1-9]|[4-9]\\d|[1-9]\\d{2,})\\s*days\\s*ago.*return"
+
+  - rule_id: "P003"
+    constraint: >
+      Exchange items must belong to the same product category as the original
+      item. Cross-category exchanges (e.g. electronics for clothing) are
+      not permitted.
+    description: "Same-category exchange rule — tau-bench retail policy."
+    blocked_patterns:
+      - "exchange.*category_mismatch[=:]\\s*true"
+      - "exchange.*cross.?category"
+      - "exchange.*different.?categor"
+      - "exchange.*\\b(laptop|computer|phone|tablet|headphone|smartwatch|gaming.console|electronic)\\b.*\\b(jacket|coat|dress|clothing|shirt|pants|sweater|outerwear|furniture|dining|accessories|handbag)\\b"
+      - "exchange.*\\b(jacket|coat|dress|clothing|shirt|pants|sweater|outerwear|furniture|dining|accessories|handbag)\\b.*\\b(laptop|computer|phone|tablet|headphone|smartwatch|gaming.console|electronic)\\b"
+      - "exchange.*(electronics|electronic).*(clothing|outerwear|apparel|furniture|accessories)"
+      - "exchange.*(clothing|outerwear|apparel|furniture|accessories).*(electronics|electronic)"
+      - "exchange.*(gaming.console|console).*(furniture|dining|table)"
+      - "exchange.*(accessories|handbag).*(electronics|laptop|computer)"
+      - "exchange.*(smartwatch|watch).*(clothing|sweater|outerwear|apparel)"
+
+  - rule_id: "P004"
+    constraint: >
+      The following item types are non-returnable under any circumstances:
+      gift cards, digital goods (including streaming subscriptions and downloads),
+      hazardous materials, and perishables.
+      Return requests for these items must be rejected.
+    description: "Non-returnable item categories — tau-bench retail policy."
+    blocked_patterns:
+      - "return.*(gift.?card|digital|hazardous|perishable)"
+      - "return.*\\[item_type=(gift_card|digital|hazardous|perishable)\\]"
+
+  - rule_id: "P005"
+    constraint: >
+      Refunds must be issued to the original payment method used for purchase.
+      Issuing a refund to a different payment method or as cash for a
+      credit card purchase is not permitted.
+    description: "Refund method policy — tau-bench retail policy."
+    blocked_patterns:
+      - "refund.*(different.?method|cash.*credit|change.*payment.?method)"

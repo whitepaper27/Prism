@@ -1,0 +1,61 @@
+# T1 Policy Memory -- tau-bench Airline Domain
+# Source: tau-bench airline policy document (Sierra Research, 2024)
+# Human-curated. Trust = 1.00.
+# blocked_patterns: Python regex, re.IGNORECASE applied.
+#
+# The agent must include key context in its proposed_action string
+# so these deterministic patterns can fire without LLM involvement.
+# e.g. "rebook_flight(booking_id=B123) [ticket_class=economy] [hours_to_departure=3]"
+
+domain: tau_airline
+
+rules:
+  - rule_id: "PA001"
+    constraint: "Economy and Basic Economy tickets cannot be rebooked or changed within 24 hours of the scheduled departure time. Only Business and First class tickets allow same-day changes."
+    description: "Same-day rebooking restriction for economy tickets."
+    blocked_patterns:
+      - "rebook.*economy.*(24.hour|same.day|today|tonight)"
+      - "change.*flight.*economy.*(24.hour|same.day|hours?.before)"
+      - "economy.*(ticket|flight).*(24.hour|same.day).*(rebook|change|modify)"
+      - "rebook.*\\[ticket_class=economy\\].*\\[hours_to_departure=([0-9]|1[0-9]|2[0-3])\\]"
+      - "rebook.*\\[ticket_class=basic_economy\\].*\\[hours_to_departure=([0-9]|1[0-9]|2[0-3])\\]"
+
+  - rule_id: "PA002"
+    constraint: "Non-refundable tickets cancelled less than 72 hours before departure are not eligible for cash refunds. They receive travel credit only. Refundable tickets always get full cash refund."
+    description: "Cancellation refund policy -- 72-hour rule."
+    blocked_patterns:
+      - "cancel.*non.refundable.*cash.refund"
+      - "cash.refund.*non.refundable"
+      - "refund.*non.refundable.*(less.than.72|within.72|under.72|24.hour|48.hour)"
+      - "cancel.*\\[ticket_type=non_refundable\\].*\\[refund_type=cash\\]"
+      - "cancel_ticket.*non_refundable.*cash"
+
+  - rule_id: "PA003"
+    constraint: "Tickets are non-transferable. A ticket cannot be transferred, reassigned, or reissued to a different passenger name. Name changes are not permitted."
+    description: "Ticket non-transferability policy."
+    blocked_patterns:
+      - "transfer.*ticket.*passenger"
+      - "reassign.*ticket"
+      - "change.*passenger.*name"
+      - "reissue.*different.*name"
+      - "ticket.*different.*passenger"
+      - "transfer_ticket"
+
+  - rule_id: "PA004"
+    constraint: "Complimentary upgrades to Business or First class are not available. Upgrades must be purchased at the upgrade fee or redeemed with loyalty miles."
+    description: "No free upgrades policy."
+    blocked_patterns:
+      - "free.*upgrade|complimentary.*upgrade|upgrade.*free|upgrade.*complimentary"
+      - "upgrade.*without\\s+(any\\s+)?charge|upgrade.*\\bno\\b.*cost|upgrade.*\\bno\\b.*fee"
+      - "upgrade_seat.*\\[payment_method=free\\]|upgrade_seat.*\\[payment_method=none\\]|upgrade_seat.*\\[payment_method=waive\\]"
+
+  - rule_id: "PA005"
+    constraint: "Checked baggage fees cannot be waived for Economy passengers. Only Elite-tier loyalty members (Gold, Platinum) receive one free checked bag."
+    description: "Baggage fee waiver restriction."
+    blocked_patterns:
+      # Use negative lookBEHIND approach: match only if loyalty_tier is standard/silver
+      # or if no elite/gold/platinum mention exists in the text
+      - "waive_fee.*baggage.*\\[ticket_class=economy\\].*\\[loyalty_tier=(standard|silver)\\]"
+      - "waive_fee.*baggage.*\\[loyalty_tier=(standard|silver)\\]"
+      - "\\[loyalty_tier=(standard|silver)\\].*waive.*baggage"
+      - "\\[loyalty_tier=(standard|silver)\\].*free.*checked.*bag"

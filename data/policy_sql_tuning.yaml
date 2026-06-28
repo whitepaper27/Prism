@@ -1,0 +1,44 @@
+# T1 Policy Memory — SQL Tuning Domain
+# Human-curated. Trust = 1.00. Never change without DBA review.
+# blocked_patterns are Python regex (re.IGNORECASE applied).
+
+domain: sql_tuning
+
+rules:
+  - rule_id: "P001"
+    constraint: >
+      No DDL changes (DROP, ALTER, CREATE INDEX, TRUNCATE) on the ORDERS or ACCOUNTS
+      tables during business hours (06:00–20:00) without explicit DBA approval.
+    description: "Production safety guardrail for the two highest-traffic tables."
+    blocked_patterns:
+      - "DROP\\s+(?:INDEX|TABLE).*(?:ORDERS|ACCOUNTS)"
+      - "ALTER\\s+TABLE\\s+(?:ORDERS|ACCOUNTS)"
+      - "CREATE\\s+(?:UNIQUE\\s+)?INDEX.*ON\\s+(?:ORDERS|ACCOUNTS)"
+      - "TRUNCATE\\s+(?:TABLE\\s+)?(?:ORDERS|ACCOUNTS)"
+
+  - rule_id: "P002"
+    constraint: >
+      Never drop a PRIMARY KEY index. Primary key drops cascade to all dependent
+      foreign keys and can render entire schemas inconsistent.
+    description: "Primary key indexes are never safe to drop without full schema analysis."
+    blocked_patterns:
+      - "DROP\\s+PRIMARY\\s+KEY"
+      - "DROP\\s+INDEX\\s+PK_"
+      - "DROP\\s+INDEX\\s+\\w+_PK\\b"
+
+  - rule_id: "P003"
+    constraint: >
+      All ALTER TABLE statements on tables larger than 1 million rows must use
+      online DDL (ALGORITHM=ONLINE for MySQL, CONCURRENTLY for PostgreSQL).
+      Standard ALTER TABLE is not permitted on large tables — it takes an exclusive lock.
+    description: "Prevents table-level locks that block reads during DDL on large tables."
+    blocked_patterns:
+      - "ALTER\\s+TABLE\\s+\\w+\\s+(?:ADD|DROP|MODIFY|CHANGE)(?!.*(?:ALGORITHM\\s*=\\s*ONLINE|CONCURRENTLY))"
+
+  - rule_id: "P004"
+    constraint: >
+      DELETE statements on ORDERS, ACCOUNTS, or TRANSACTIONS without a WHERE clause
+      are forbidden. All mass-delete operations require a row count estimate first.
+    description: "Prevents accidental full-table deletes on critical business tables."
+    blocked_patterns:
+      - "DELETE\\s+FROM\\s+(?:ORDERS|ACCOUNTS|TRANSACTIONS)\\s*(?:;|$|--)"
