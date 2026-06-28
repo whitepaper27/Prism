@@ -38,16 +38,18 @@ and (3)~a formal trust ordering where higher-trust memory overrides
 lower-trust suggestions before tool execution, without LLM reasoning
 in the loop.
 We evaluate PRISM on PRISM-Bench (80 tasks, retail and airline domains)
-with two resolver implementations: regex-based pattern matching and
-FTS5 keyword matching.
-PRISM-regex achieves $85.2\% \pm 1.0\%$ retail and $90.7\% \pm 2.5\%$
-airline task success with zero over-blocking but limited recall.
-PRISM-FTS5 improves violation recall but introduces 65\% over-blocking
-on airline tasks due to proposal-refusal ambiguity.
-The architecture contribution---trust-ordered tiers with failure-to-rule
-promotion and deterministic conflict resolution---is independent of the
-matcher. The gap between regex (too narrow) and FTS5 (too broad) defines
-the open grounding problem for deterministic LLM policy enforcement.
+with four resolver variants.
+On unstructured LLM output, regex matching achieves 100\% precision
+but only 75--81\% recall.
+Enforcing a structured JSON output contract raises recall to 93\%
+retail and 90\% airline while preserving 100\% precision and zero
+over-blocking---lifting retail task success from 85\% to 97\%.
+PRISM does not merely need a better resolver; it needs a contracted
+LLM-to-resolver interface.
+The architecture contribution---trust-ordered tiers, failure-to-rule
+promotion, and deterministic conflict resolution---is independent
+of the matcher; failures are interface-grounding failures,
+not policy-architecture failures.
 All tasks, rules, prompts, raw outputs, and evaluation scripts are released.
 \end{abstract}
 
@@ -97,21 +99,25 @@ The LLM reasons within these constraints but does not decide which memory wins.
 
 Our contribution is not tiered memory---MemGPT~\cite{packer2023memgpt} and others already do that.
 Our contribution is not failure-derived memory---Reflexion~\cite{shinn2023reflexion} already does that.
-Our contribution is \emph{the combination of deterministic trust-ordered conflict resolution
-with failure-to-rule promotion}, producing an enforcement system where:
+Our contributions are:
 
 \begin{itemize}
-\item Every enforcement decision is deterministic and traceable to a specific rule.
-\item Rejected actions are converted into structured blocking rules (Crystal memory),
-      not advisory reflective text.
-\item Crystal rules earn trust through evidence and can be audited, overridden, or promoted.
+\item \emph{Deterministic trust-ordered conflict resolution with failure-to-rule promotion},
+      where every enforcement decision is traceable to a specific rule,
+      rejected actions become structured blocking rules (Crystal memory),
+      and Crystal rules earn trust through evidence.
+\item \emph{Identification of the LLM-resolver interface contract as the dominant factor
+      controlling enforcement recall.} Enforcing structured JSON output raises
+      resolver recall from 75\% to 93\% while preserving 100\% precision---showing
+      that failures are primarily interface-grounding failures, not policy-architecture failures.
 \end{itemize}
 
 We evaluate PRISM on PRISM-Bench, an 80-task synthetic policy-compliance benchmark
 inspired by $\tau$-bench-style~\cite{yao2024taubench} retail and airline workflows,
-using a five-configuration ablation (C0--C4) that isolates each component's contribution.
-We report honest results: RAG and Reflexion-style memory sometimes outperform PRISM on raw task success,
-and no pairwise accuracy differences reach statistical significance at our sample sizes.
+with a five-configuration ablation (C0--C4) and four resolver variants
+that isolate each component's contribution.
+Contracted PRISM substantially improves enforcement recall and retail task
+success while preserving perfect precision.
 PRISM's value is not always higher accuracy---it is the change from
 \emph{advisory compliance} to \emph{deterministic, auditable enforcement}.
 All tasks, labels, rules, prompts, raw model outputs, and evaluation scripts are
@@ -502,20 +508,51 @@ PRISM-regex (C3/C4) adds deterministic enforcement with competitive accuracy.}
 \label{fig:accuracy}
 \end{figure}
 
-\noindent The results reveal a clear precision-recall tradeoff in resolver design.
-PRISM-regex achieves zero over-blocking but limited violation recall---C3
-reaches 96.7\% airline success, the highest across all configurations.
-PRISM-FTS5 improves violation recall through keyword overlap but
-introduces catastrophic over-blocking (65\% on airline) because
-keyword matching cannot distinguish ``I will cancel the shipped order''
-(violation) from ``I cannot cancel because it is shipped'' (compliant refusal).
+\subsection{Resolver Interface Ablation}
+\label{sec:interface}
 
-\paragraph{The architecture contribution is resolver-independent.}
-Both resolver variants demonstrate the same trust ordering, Crystal
-promotion, and deterministic conflict resolution. The performance gap
-between regex and FTS5 isolates the grounding problem: how to map
-between LLM natural language and structured policy rules.
-This is the open problem PRISM surfaces, not the one it solves.
+\begin{table}[h]
+\centering
+\caption{Resolver recall and task success by LLM-resolver interface contract (C4 Full PRISM).
+All variants use the same PRISM architecture and regex-based deterministic resolution.
+The variable is how the LLM output is structured before resolver matching.}
+\label{tab:interface}
+\small
+\begin{tabular}{@{}l cc cc cc@{}}
+\toprule
+& \multicolumn{2}{c}{Success (\%)} & \multicolumn{2}{c}{Recall (\%)} & \multicolumn{2}{c}{Over-block (\%)} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7}
+Variant & Retail & Airline & Retail & Airline & Retail & Airline \\
+\midrule
+Natural regex       & $85.2 \pm 1.0$ & $90.7 \pm 2.5$ & 75.3 & 81.2 & 0.0 & 0.0 \\
+\textbf{Enforced JSON} & $\mathbf{97.2 \pm 2.4}$ & $\mathbf{92.7 \pm 2.5}$ & \textbf{93.1} & 89.6 & \textbf{0.0} & \textbf{0.0} \\
+LLM Extractor       & $82.0 \pm 4.0$ & $96.7 \pm 0.0$ & 72.1 & \textbf{96.8} & 0.0 & 0.0 \\
+FTS5 keywords       & $81.0 \pm 5.9$ & $76.0 \pm 6.5$ & 83.1 & 90.8 & 6.2 & 65.0 \\
+\bottomrule
+\end{tabular}
+\vspace{1mm}
+
+\small\emph{All variants maintain 100\% precision except FTS5 (96\% retail, 79\% airline).}
+\end{table}
+
+\noindent PRISM does not merely need a better resolver; it needs a contracted
+LLM-to-resolver interface.
+Enforcing structured JSON output raises retail recall from 75.3\% to 93.1\%
+while preserving 100\% precision and zero over-blocking---lifting
+retail task success from 85.2\% to \textbf{97.2\%}.
+LLM extraction achieves 96.8\% airline recall but is domain-sensitive
+(72.1\% retail), suggesting that extraction quality depends on domain complexity.
+FTS5 keyword matching achieves moderate recall but introduces
+catastrophic over-blocking (65\% airline) because keyword overlap cannot
+distinguish policy violations from compliant refusals.
+
+\paragraph{The interface contract is the dominant factor.}
+The same PRISM architecture---same trust ordering, same Crystal promotion,
+same deterministic resolver---produces 85\% or 97\% task success depending
+solely on whether the LLM emits structured output.
+This isolates the bottleneck: failures are interface-grounding failures,
+not policy-architecture failures.
+Deterministic safety works best when paired with structured state emission.
 
 \begin{table}[h]
 \centering
@@ -710,29 +747,33 @@ to LLM phrasing variation.
 \section{Discussion}
 \label{sec:discussion}
 
-\paragraph{The grounding bottleneck.}
-PRISM's central empirical finding is that deterministic enforcement is
-architecturally feasible but resolver grounding quality determines
-whether it helps or hurts.
-Regex matching is too narrow: it fires only on structured tokens the LLM
-may or may not emit. FTS5 keyword matching is too broad: it cannot distinguish
-a policy violation from a compliant refusal that mentions the same keywords.
-The gap between these two defines the open problem for deterministic
-LLM policy enforcement.
+\paragraph{The interface contract, not the resolver, is the bottleneck.}
+PRISM's central empirical finding is that the same deterministic architecture
+produces 85\% or 97\% task success depending on whether the LLM emits
+structured output.
+Regex matching on natural language is too narrow (75\% recall);
+FTS5 keyword matching is too broad (65\% over-blocking).
+Enforced JSON resolves both problems: structured tokens give regex
+reliable matching targets, raising recall to 93\% while preserving
+100\% precision and zero over-blocking.
+This means the architecture is sound---the grounding interface is the variable.
+
+\paragraph{Resolver variant tradeoffs.}
+Regex is the safest resolver: 100\% precision, zero over-blocking,
+but brittle on natural language (75--81\% recall).
+Enforced JSON is the strongest: 93\% retail recall, 90\% airline recall,
+100\% precision, zero over-blocking---but requires the LLM to respect
+a structured output contract.
+LLM extraction helps airline (97\% recall) but not retail (72\%),
+suggesting extraction quality is domain-sensitive.
+FTS5 should not be used as a primary resolver due to
+proposal-refusal ambiguity.
 
 \paragraph{When advisory approaches are sufficient.}
 LLM self-compliance reaches 79--96\% across configurations.
 When violations are low-cost and audit is not required,
-advisory approaches (C1/C2) may be preferable---they achieve 82--93\%
-task success with no over-blocking risk and simpler infrastructure.
-
-\paragraph{The enforcement--accuracy tradeoff.}
-PRISM-regex achieves zero over-blocking (high precision, low recall).
-PRISM-FTS5 achieves higher recall but 65\% airline over-blocking
-(low precision). In practice, deployers must choose a resolver
-whose precision-recall profile matches their domain's cost structure:
-high-cost violations warrant aggressive matching with human review of blocks;
-high-cost over-blocking warrants conservative matching.
+advisory approaches (C1/C2) achieve 82--93\% task success
+with no over-blocking risk and simpler infrastructure.
 
 \paragraph{Crystal memory: mechanism validated, activation pending.}
 Crystal rules accumulate through shadow matching---94 rules generated
@@ -839,24 +880,27 @@ Random seeds and API call timestamps & Yes \\
 
 We presented PRISM, a memory architecture that separates policy discovery,
 failure-derived rule promotion, and deterministic enforcement for LLM agents.
-Our ablation across two domains with two resolver implementations reveals
-a central systems finding: deterministic enforcement is architecturally
-feasible, but resolver grounding quality determines whether it helps or hurts.
+Our four-variant resolver ablation reveals a central systems finding:
+the LLM-resolver interface contract is the dominant factor controlling
+enforcement quality.
 
-Regex-based matching achieves zero over-blocking but limited recall
-(14--18\% violations missed). FTS5 keyword matching improves recall
-but introduces catastrophic over-blocking (65\% on airline) because
-it cannot distinguish a policy violation from a compliant refusal.
-The gap between these two---too narrow versus too broad---defines the
-open problem for deterministic LLM policy enforcement.
+On unstructured natural language, regex matching achieves 100\% precision
+but only 75--81\% recall. Enforcing a structured JSON output contract
+raises recall to 93\% retail and 90\% airline while preserving 100\%
+precision and zero over-blocking---lifting retail task success from
+85\% to 97\%.
+Contracted PRISM substantially improves enforcement recall and task
+success while preserving perfect precision.
 
 The architecture contribution is independent of the matcher:
 trust-ordered memory tiers, failure-to-rule promotion via Crystal memory,
 and deterministic conflict resolution are reusable across any
-grounding implementation. Crystal rules accumulate through shadow matching
-and provide full provenance from violation to rejection to rule to
-future enforcement---a mechanism for agents to learn from failure
-with auditable justification for every enforcement decision.
+grounding implementation. Crystal rules accumulated with perfect
+precision in observed promotions, but no rule crossed the activation
+threshold within 50 tasks, indicating that longer-horizon evaluation
+is required before claiming adaptive memory benefits.
+
+Deterministic safety works best when paired with structured state emission.
 
 Code, PRISM-Bench tasks, and all experimental artifacts are available at
 \url{https://github.com/whitepaper27/Prism}.
